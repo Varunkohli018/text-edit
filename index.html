@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Full PDF Text Editor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+<script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+<style>
+  body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+  .pdf-page { position: relative; margin-bottom: 20px; }
+  canvas { border: 1px solid #aaa; }
+  .textBox { 
+    position: absolute; 
+    border: 1px solid #0a0; 
+    background: rgba(255,255,255,0.6); 
+    font-size: 12px; 
+    padding: 0 2px; 
+    box-sizing: border-box;
+  }
+  input[type="file"] { margin-bottom: 10px; }
+  button { margin-top: 10px; padding: 8px 16px; cursor: pointer; }
+</style>
+</head>
+<body>
+<h2>Full PDF Text Editor</h2>
+<input type="file" id="pdfFile" accept="application/pdf">
+<div id="pdf-container"></div>
+<button id="saveBtn">Save PDF</button>
+
+<script>
+const fileInput = document.getElementById("pdfFile");
+const pdfContainer = document.getElementById("pdf-container");
+let originalBytes = null;
+let pdfPages = [];
+
+fileInput.addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  originalBytes = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: originalBytes }).promise;
+
+  pdfContainer.innerHTML = "";
+  pdfPages = [];
+
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const viewport = page.getViewport({ scale: 1.5 });
+    const div = document.createElement("div");
+    div.className = "pdf-page";
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    div.appendChild(canvas);
+    pdfContainer.appendChild(div);
+
+    await page.render({ canvasContext: ctx, viewport }).promise;
+
+    // Extract text items
+    const textContent = await page.getTextContent();
+    const textBoxes = [];
+
+    textContent.items.forEach(item => {
+      const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
+      const x = tx[4];
+      const y = tx[5] - 10; 
+      const input = document.createElement("input");
+      input.className = "textBox";
+      input.value = item.str;
+      input.style.left = x + "px";
+      input.style.top = (viewport.height - y - 10) + "px";
+      input.style.width = (item.width * viewport.scale) + "px";
+      input.style.height = (item.height * viewport.scale) + "px";
+      div.appendChild(input);
+      textBoxes.push({ input, item });
+    });
+
+    pdfPages.push({ page, viewport, textBoxes });
+  }
+});
+
+document.getElementById("saveBtn").addEventListener("click", async () => {
+  if (!originalBytes) return alert("Upload a PDF first!");
+  const pdfDoc = await PDFLib.PDFDocument.load(originalBytes);
+
+  for (let i = 0; i < pdfPages.length; i++) {
+    const { viewport, textBoxes } = pdfPages[i];
+    const pdfPage = pdfDoc.getPage(i);
+    const { width, height } = pdfPage.getSize();
+
+    // Cover old text
+    pdfPage.drawRectangle({ x: 0, y: 0, width, height, color: PDFLib.rgb(1,1,1) });
+
+    // Draw updated text
+    textBoxes.forEach(tb => {
+      const x = parseFloat(tb.input.style.left) / viewport.width * width;
+      const y = height - (parseFloat(tb.input.style.top) / viewport.height * height);
+      pdfPage.drawText(tb.input.value, { x, y, size: 12, color: PDFLib.rgb(0,0,0) });
+    });
+  }
+
+  const editedBytes = await pdfDoc.save();
+  const blob = new Blob([editedBytes], { type: "application/pdf" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = "edited.pdf";
+  link.click();
+});
+</script>
+</body>
+</html>
